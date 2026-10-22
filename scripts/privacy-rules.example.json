@@ -1,0 +1,33 @@
+{
+  "_comment": "本地专用规则模板。复制为 privacy-rules.json 后填写你自己的真实标识；privacy-rules.json 必须加进 .gitignore（它含你的 QQ 号/路径）。本模板本身不含真实数据，可以入库。",
+  "deny": [
+    { "name": "示例：我的管理员 QQ", "pattern": "(?<![0-9])1[0-9]{9}(?![0-9])", "flags": "" },
+    { "name": "示例：我的机器用户名", "pattern": "C:\\\\Users\\\\<你的用户名>\\\\", "flags": "i" },
+    { "name": "示例：我的工作盘", "pattern": "D:\\\\<你的目录>\\\\", "flags": "i" }
+  ],
+  "denyFiles": [
+    "notes/",
+    "*.private.md"
+  ],
+  "allowPaths": [
+    "scripts/console-ui-"
+  ],
+  "_allowLiterals_comment": [
+    "字面值豁免：只放过「这一条规则」命中「这一个确切字符串」的情况，比 allowPaths 的按文件放行窄得多。",
+    "同一文件里别的命中照旧会报。字段格式：{ rule: 规则名, value: 被豁免的确切字符串 }。",
+    "内置默认里已有一条 { rule: '本机绝对路径（非系统盘的顶层目录）', value: 'D:\\\\日记\\\\' }，",
+    "因为 D:\\日记 是本项目自己的出厂默认日记目录，不是隐私目录；你不需要重复它。"
+  ],
+  "allowLiterals": [
+    { "rule": "示例：我的工作盘", "value": "D:\\\\<你的目录>\\\\" }
+  ],
+  "_allowRules_comment": [
+    "按「文件 + 规则名」豁免：只放过**这一条规则**在**这个文件**里的命中，",
+    "同文件里其它规则照旧会查。这是替代 allowPaths 的首选写法 ——",
+    "allowPaths 会让整个文件从此一条规则都不查（一万行的核心文件等于开了个大盲区）。",
+    "字段格式：{ path: 相对路径, rule: 规则名（必须与 deny[].name 完全一致） }。"
+  ],
+  "allowRules": [
+    { "path": "docs/示例.md", "rule": "示例：我的工作盘" }
+  ]
+}

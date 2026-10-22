@@ -1,0 +1,94 @@
+# Dependencies
+node_modules/
+.npm-cache/
+
+# Runtime state and local config (never publish)
+state/
+config.json
+*.log
+*.bak
+*.bak-*
+
+# Local development / planning / research docs (not part of public project)
+/PROJECT_GUIDE.md
+/ARCH_REVIEW.md
+/DSH_QQ_TOOLS_PLAN.md
+/GEN2_SIMULATION_PLAN.md
+/SOCIAL_MODE_PLAN.md
+/RESEARCH_QQ_MESSAGE_DND.md
+/RESEARCH_SNOWLUMA_EMOJI_STICKER.md
+/SnowLuma功能调研.md
+/真人语感策略.md
+# 花费实测档案：含个人用量数据，且未被任何公开文档引用 —— 默认不发布。
+# （如需公开，删掉这一行并挪到 docs/ 后从 README 链接，避免成为孤儿文件。）
+/TOKEN_COST.md
+
+# 本地模型选型 / 硬件配置调研（内部笔记，无任何公开文档引用）
+/LOCAL_MODEL_SIZING.md
+
+# 大体积演示视频（10.93 MB）：改由 Release 附件托管，README 有链接。
+# 注意：移除只影响此后提交、--depth 1 克隆与 Release 的 Source zip；
+# 历史中的旧 blob 仍在，完整 clone 的体积要等历史重写后才会下降。
+/assets/project-intro.mp4
+
+# Local one-off dev/debug/patch scripts
+# (machine-specific paths/IDs, or bound to artifacts of a single probe run under state/)
+/scripts/cleanup-probe-sessions.mjs
+/scripts/cleanup-probe-workspaces.mjs
+/scripts/cleanup-test-sessions.mjs
+/scripts/debug-whitelist.mjs
+/scripts/diag-archive.mjs
+/scripts/fix-probe-workspace-title.mjs
+/scripts/patch-qq-chat-v2-collect-memory.mjs
+/scripts/patch-qq-chat-v2-presleep.mjs
+/scripts/patch-qq-chat-v2-stickers.mjs
+/scripts/patch-web-mcp-timeout.mjs
+
+
+# 本机专用的隐私扫描规则（含真实 QQ 号/路径，不入库）
+/scripts/privacy-rules.json
+
+# ── workbuddy 相关：本仓库不收录 ────────────────────────────────────────────
+# 这五个脚本只有一个用途：给**别人家**的 DSH 插件 dsh-workbuddy-connect 打补丁 /
+# 跑它的 e2e / 清它的诊断钩子。它们写死了本机用户名与 %USERPROFILE%\.dsh\profiles\
+# 下的绝对路径，对仓库使用者毫无意义；且该插件本身不在本仓库管辖范围内，
+# 保留它们会让「本仓库的 bug 修复范围」看起来包含了第三方插件。
+/scripts/clean-workbuddy-diag.mjs
+/scripts/diff-workbuddy-patch.mjs
+/scripts/e2e-workbuddy-chat.mjs
+/scripts/patch-workbuddy-identity.mjs
+/scripts/verify-workbuddy-patch.mjs
+
+# DSH 沙箱写入探针的残留物（冒烟测试会生成，无任何引用）
+/.dsh_write_test.txt
+
+# ── 本机专属的 DSH 补丁（不是仓库的一部分）──────────────────────────────────
+# dsh/patches/ 下是「按本机绝对路径写死」的 profile 补丁：它们把
+# <工作盘>\...\scripts\archive-conversation.ps1 这样的路径直接塞进提示词，
+# 换台机器/换盘符就整段失效，且会泄漏作者的工作盘目录名。
+# 仓库里只有 dsh/agent-presets/（preset 权威源）属于发布物；
+# 这里的补丁属于「怎么把本仓库接到我这台机器上」，与 .gitignore 上面那批
+# 一次性脚本同一类，故整体排除。要发布可复用的补丁请改写成占位符形式后放进
+# dsh/agent-presets/ 或 scripts/，不要在注释里留真实绝对路径。
+/dsh/patches/
+
+# ── 内部文档保护（修复：忽略规则仍指向旧的根目录路径）──────────────────────
+# 上面那批 `/XXX.md` 规则是按**仓库根目录**写的，但这些文档后来整体挪进了 docs/，
+# 旧规则再也匹配不上 —— 于是"原始开发文档不进公开仓库"这条约定静默失效，privacy-scan
+# 在 docs/ 里扫出多份含本机真实路径（含本机用户名与工作盘路径）的文件。这里按新路径补回。
+# 判断依据：① 原 .gitignore 已列出的同义文件；② privacy-scan 实测命中真实路径的文件；
+# ③ 安全审计/发布计划这类"写了怎么绕过"的内部文档。
+docs/audits/
+docs/design/
+docs/legacy/
+docs/research/
+docs/qq-bridge-PUBLISH_PLAN.md
+docs/qq-bridge-SECURITY_AUDIT.md
+docs/guides/PROJECT_GUIDE.md
+# 注意：docs/guides/VOICE.md 已重写为**脱敏版**（只有占位符，privacy-scan 通过），
+# 因此不再忽略它。它被 docs/README.md 索引、README.md 与 RULES.md 链接、
+# scripts/test-voice-system.mjs 断言，若继续忽略会让公开仓库出现指向不存在文件的断链。
+
+# 语音库（用户个人音频素材，config.json 的 socialV2.voice.dir 指向此处）
+audio/
+

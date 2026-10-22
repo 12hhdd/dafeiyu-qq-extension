@@ -1,0 +1,11 @@
+# DSH 0.2.0 bundle patch。
+#
+# 死契约（改之前先读 plugins/qq-mode-console/cordis.patch.yml 的同一段注释）：
+#   id   —— 必须等于 lib/index.js 导出的 settings 命名空间（这里是 DIARY_NAMESPACE = 'qq-diary'）。
+#           0.2.0 不再调 ctx.settings.register()，命名空间是从 profile 的 loader entry id 推导的，
+#           所以这一行写错，设置面板里就找不到这个命名空间。
+#   name —— 包名（plugins/qq-diary/package.json 的 name）。
+- insert:
+    - id: qq-diary
+      name: qq-diary
+      config: {}

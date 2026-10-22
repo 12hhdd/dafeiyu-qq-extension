@@ -1,0 +1,16 @@
+{
+  "name": "qq-qzone",
+  "version": "0.2.0-r3",
+  "description": "QQ 空间（说说）插件：把发布 / 列表 / 删除的纯逻辑与配置项从 MCP server 里抽出来，作为 DSH bundle 插件暴露 settings 命名空间 qq-qzone。没有 host 半 —— 桥接无 qzone 端点，实际发送仍由 MCP 工具直连 OneBot。",
+  "type": "module",
+  "main": "./lib/index.js",
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.1"
+  }
+}

@@ -1,0 +1,12 @@
+# entry 的 **id 必须等于插件注册的设置命名空间名**（`qq-emu-phone`，见 lib/index.js 的
+# EMUPHONE_NAMESPACE）。DSH 0.1.7 的 settings.write() 用
+# `configEditor.entries().find((row) => row.options.id === ns)` 定位可写目标，
+# 再用 `entry.fiber.runtime.Config` 取 schema —— id 与命名空间不同名时，
+# 任何对 `qq-emu-phone` 命名空间的写入都会抛 `No configurable plugin entry "qq-emu-phone"`。
+# `name` 是包名，二者职责不同（在本插件里恰好同为 `qq-emu-phone`），不能混为一谈。
+#
+# 本文件是 `package.json` 里 `dsh.bundle.patch` 指向的 patch；顶层必须是 YAML 数组。
+- insert:
+    - id: qq-emu-phone
+      name: qq-emu-phone
+      config: {}

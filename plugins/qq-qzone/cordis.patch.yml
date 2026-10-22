@@ -1,0 +1,10 @@
+# qq-qzone bundle patch：把一个 settings 命名空间插进宿主。
+#
+# 死契约：
+#   · id   必须等于 lib/index.js 导出的 QZONE_NAMESPACE（'qq-qzone'）；
+#   · name 必须是包名（'qq-qzone'，= plugins/ 下的目录名）。
+# scripts/test-qq-qzone.mjs 用 /^\s*-\s*id:\s*(\S+)\s*$/gm 抽这一行做比对。
+- insert:
+    - id: qq-qzone
+      name: qq-qzone
+      config: {}

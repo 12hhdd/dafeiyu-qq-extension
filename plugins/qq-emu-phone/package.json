@@ -1,0 +1,16 @@
+{
+  "name": "qq-emu-phone",
+  "version": "0.2.0-r3",
+  "description": "「我的手机」MuMu 安卓模拟器控制的 DSH 插件壳（settings 命名空间 qq-emu-phone）",
+  "type": "module",
+  "main": "./lib/index.js",
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.1"
+  }
+}
