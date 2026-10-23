@@ -9,8 +9,8 @@
 1. **克隆/获取仓库**：
 
    ```bash
-   git clone https://github.com/Derpyu520/qq-bridge.git
-   cd qq-bridge
+   git clone https://github.com/12hhdd/dafeiyu-qq-extension.git
+   cd dafeiyu-qq-extension
    ```
 
    > 默认分支 `main` 即当前版本 **v0.1.5**（适配 DSH 0.1.5-rc.1），clone 下来无需切换分支。
