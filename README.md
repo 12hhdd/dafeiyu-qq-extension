@@ -8,6 +8,8 @@
 >
 > 🎤 独立的「发语音」工具已拆到仓库上一级的 **`../voice-tool/`**（命令行 `voice-cli.mjs` / 图形界面 `voice-gui.mjs`），不再依赖 qq-bridge 运行。
 
+> 🐋 **这是「大肥鱼」自研的 QQ 拓展**：把 DeepSeek Harness（DSH）的 AI agent 接进 QQ，让 agent 在 QQ 群/私聊里自主收发消息、查群、回消息。除了聊天桥接，它还顺手把本机 MuMu 安卓模拟器变成 agent 的「手机」（看屏幕 / 点按 / 输入），把 QQ 里的记忆写成每日日记，并支持 agent 发 QQ 空间动态。整套工具以「DSH bundle 插件 + MCP server」的形式整理在本仓库，符合 DSH 三方插件标准。架构总览见 [架构图](assets/architecture.html)。
+
 把 QQ 消息接入 DSH agent：QQ 好友/群发来的消息会变成 DSH 会话里的用户消息，agent 的回复（含提问、工具审批）会发回 QQ。
 
 > ⚠️ **当前版本 `v0.2.0`，适配 DSH 0.2.0-rc.2**（在该版本上逐项实测：`npm run verify:adaptation`）。

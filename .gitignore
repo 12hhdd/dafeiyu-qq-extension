@@ -2,6 +2,11 @@
 node_modules/
 .npm-cache/
 
+# Archify 架构图：只发布渲染后的 HTML（assets/architecture.html），
+# 生成用的候选 JSON 与最终校验收据/浏览器证据是本地产物，不入库。
+.archify/
+/assets/architecture.*.json
+
 # Runtime state and local config (never publish)
 state/
 config.json

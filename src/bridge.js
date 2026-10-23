@@ -3887,10 +3887,12 @@ async function main() {
       // 纯图片/表情/转发（没有文字）也要入库：它们本身就是"对方发了东西"。
       if (!plainContent && !mediaList.length && !forwardIds.length) continue;
       const isOwner = item.userId != null && String(item.userId) === String(cfg.ownerQQ ?? '');
-      appendSocialV2Message(
+      const bkRes = appendSocialV2Message(
         key, item.sender, textContent, plainContent, false, isOwner,
         item.messageId, mediaList, item.userId, forwardIds, item.timeMs,
       );
+      // 与本地已有消息撞 messageId（并发补收/边界重叠）：不计数，也不再参与唤醒评分。
+      if (bkRes && bkRes.duplicate) continue;
       appended += 1;
       // 唤醒判定复用实时路径的规则（私聊必醒；群聊按 @/名字/关键词/提问/指定成员/概率）。
       const pseudo = toPseudoEvent(item, selfId);
@@ -10328,6 +10330,33 @@ async function main() {
         }
       }
     }
+    // ── messageId 兜底去重（upsert）────────────────────────────────────
+    // 入队原本只按 seq 递增，自己不做判重；唤醒重投、补收并发、网关重发都可能把同一条
+    // 消息塞两遍，症状就是未读快照里出现重复批次（用户 2026-10-23 反馈的那次）。
+    // 这里按 messageId 做一次 upsert：同一条再来时只刷新内容，不新增 seq、不进未读、
+    // 也不推动任何水位 —— 上层再怎么重投，模型看到的未读列表也不会重复。
+    const dupId = messageId != null && String(messageId) !== '' ? String(messageId) : null;
+    if (dupId) {
+      const dup = [...(st.unread || []), ...(st.recentMessages || [])].find((m) => m && m.messageId === dupId);
+      if (dup) {
+        dup.sender = sender;
+        dup.text = truncateText(String(textContent), 200);
+        dup.plain = truncateText(String(plainContent ?? textContent), 200);
+        dup.tail = truncateTextTail(String(plainContent ?? textContent), 200);
+        dup.quoteTargetIsSelf = !!quoteTargetIsSelf;
+        dup.isOwner = !!isOwner;
+        dup.ownerLabel = isOwner ? `管理员（ownerQQ ${cfg.ownerQQ ?? ''}）` : '';
+        dup.media = safeMedia;
+        dup.hasMedia = safeMedia.length > 0;
+        dup.forwardIds = safeForwardIds;
+        dup.hasForward = safeForwardIds.length > 0;
+        if (Number(timeMs) > 0) dup.time = Number(timeMs);
+        saveSocialV2State();
+        log(`[dedupe] ${key} 重复消息已合并（messageId=${dupId} seq=${dup.seq}）`);
+        return { seq: dup.seq, duplicate: true };
+      }
+    }
+
     const msg = {
       seq: (st.lastUnreadSeq || 0) + 1,
       messageId: messageId != null ? String(messageId) : null,
@@ -10370,6 +10399,7 @@ async function main() {
       if (topicHit || participantHit) t.lastMentionAt = Date.now();
     }
     saveSocialV2State();
+    return { seq: msg.seq, duplicate: false };
   }
 
   // 二代拍一拍事件写入最近/未读消息流，让 AI 能看到“谁拍了拍谁/拍了拍我”。
@@ -11299,7 +11329,13 @@ async function main() {
     // 二代仿真模式（reserved2）：唤醒调度
     if (currentMode === 'reserved2') {
       const sender = kind === 'group' ? (event.sender?.card || event.sender?.nickname || String(event.user_id)) : '私聊';
-      appendSocialV2Message(key, sender, textContent, plainContent, quoteTargetIsSelf, isOwner, event.message_id ?? event.msg_id ?? null, mediaList, event.user_id ?? null, extractForwardIds(event.message ?? []));
+      const appendedMsg = appendSocialV2Message(key, sender, textContent, plainContent, quoteTargetIsSelf, isOwner, event.message_id ?? event.msg_id ?? null, mediaList, event.user_id ?? null, extractForwardIds(event.message ?? []));
+      // 同一条消息重复到达（网关重发/重连重投）：内容已合并进未读里那条，不再重走唤醒流程，
+      // 否则会叠加出第二个回合，进而把同一批旧消息再投一次。
+      if (appendedMsg && appendedMsg.duplicate) {
+        log(`[dedupe] ${key} 实时重复消息已跳过唤醒（seq ${appendedMsg.seq}）：${textContent.slice(0, 60)}`);
+        return;
+      }
       // 二代同样收集群聊黑话学习素材（AI 自主提交之外，桥接仍自动提取高频陌生词）
       if (kind === 'group') feedSlangWindow(key, sender, plainContent);
       if (socialV2.paused) {
