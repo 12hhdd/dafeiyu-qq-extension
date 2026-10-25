@@ -526,7 +526,7 @@ function appAction(action, pkg) {
 // 此前这里写的是 '1.0.0'，与其余三个 MCP server 的 0.2.0-r3 不一致，是既有漂移。
 const server = new McpServer({ name: 'emu-phone', version: '0.2.0-r3' });
 
-server.tool('emu_status', '查看「我的手机」（本机 MuMu 安卓模拟器）的状态：型号、安卓版本、分辨率、前台应用。只读。', {}, async () => {
+server.tool('emu_status', '查看「我的手机」（本机 MuMu 安卓模拟器）的状态：型号、安卓版本、分辨率、前台应用、动画三档是否已关（animations）。只读。', {}, async () => {
   try {
     const size = screenSize();
     const props = sh('getprop ro.build.version.release; getprop ro.product.model; getprop ro.product.cpu.abilist').split(/\r?\n/);
@@ -613,7 +613,7 @@ server.tool('emu_focus_text', '点击输入框并确认键盘弹出（自动重�
   } catch (e) { return { content: [{ type: 'text', text: `聚焦失败：${e?.message ?? e}` }], isError: true }; }
 });
 
-server.tool('emu_text', '向输入框输入文字（ASCII 走 input text，中文自动走共享剪贴板粘贴）。粘错框/粘串了会回读校验并自动重试。', {
+server.tool('emu_text', '向输入框输入文字（ASCII 走 input text；中文走 ADBKeyboard 的 base64 广播，没装 ADBKeyboard 才退回共享剪贴板粘贴）。粘错框/粘串了会回读校验并自动重试。', {
   text: z.string().describe('要输入的文字'),
   enter: z.boolean().optional().describe('输入后是否立刻回车（搜索框提交用）'),
   field: z.string().optional().describe('目标输入框的文字/描述/id 尾部（如 et_title / et_content）。多输入框界面强烈建议传，否则可能粘进当前还有焦点的别的框'),
