@@ -86,6 +86,11 @@ const DEFAULT_RULES = {
     { path: 'src/bridge.js', rule: '疑似令牌/密钥（高熵串）' },
     { path: 'src/bridge.js', rule: '疑似凭据赋值（有实际值）' },
     { path: 'src/dsh-client.js', rule: '疑似凭据赋值（有实际值）' },
+    // assets/architecture.html 是 archify 生成的单文件架构图，内联了**字体文件**的
+    // woff2 base64（`data:font/woff2;base64,d09GMgABAAAA...`）。字体二进制天然是
+    // 随机字节，转成 base64 后就是高熵串，必然命中「疑似令牌/密钥」——这是格式决定的
+    // 误报，不是泄漏。只放行这一条规则：同文件里若真出现 QQ 号、本机路径等，照旧会报。
+    { path: 'assets/architecture.html', rule: '疑似令牌/密钥（高熵串）' },
   ],
   // 单条字面值豁免（比 allowPaths 窄得多：只放过**这一个确切字符串在**这一条规则下的命中）。
   //

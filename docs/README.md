@@ -19,7 +19,7 @@
 | [guides/SECURITY_BASELINE.md](guides/SECURITY_BASELINE.md) | **安全基线与威胁模型**：威胁主体、已实现的边界（准入/工具面/出站/控制台/落盘/网络）、已知残余风险、发布前回归清单、改动检查单 | ✅ **改动安全相关代码前必读**（2026-09-20 新增） |
 | [guides/ONBOARDING_GOTCHAS.md](guides/ONBOARDING_GOTCHAS.md) | 新手接入常见遗漏：六个必做步骤（`npm install` / `config.json` 复制 / `setup-dsh.mjs` + 重启 DSH / `homeDir`）、首次 `1006` 正常序列、必错配置项、运维清单，以及与部分第三方教程不一致的说法 | ✅ 2026-10-19 新增 |
 | [guides/DSH_021_CWD_PROMPT_FIX.md](guides/DSH_021_CWD_PROMPT_FIX.md) | **DSH 0.2.1 起 `{{cwd}}` 提示词变量被移除**：QQ 会话每轮 `unknown prompt variable` 的现象、根因证据（agent loop 只注册 provider/model）、改动清单、验证与重启步骤 | ✅ 2026-10-19 新增（升级 DSH 前后都建议一读） |
-| [guides/EMU_PHONE.md](guides/EMU_PHONE.md) | 「我的手机」全解：`mcp__emu-phone__*` 九个工具的参数 / **逐字返回文案** / 坑、`config.json` 的 `emuPhone` 段与 `qq-emu-phone` 命名空间（两份不同步的配置）、为什么是 MCP server 而非插件、`runAdb()` 为什么不用管道、六个真实失败形态 | ✅ 2026-10-22 新增（用 `emu_*` 工具前必读；含"设置页改动不生效"的已知漂移） |
+| [guides/EMU_PHONE.md](guides/EMU_PHONE.md) | 「我的手机」全解：`mcp__emu-phone__*` 十一个工具的参数 / **逐字返回文案** / 坑、`config.json` 的 `emuPhone` 段与 `qq-emu-phone` 命名空间（两份不同步的配置）、为什么是 MCP server 而非插件、`runAdb()` 为什么不用管道、两个根因（uiautomator 等不到 idle / 输入框点不到）、若干真实失败形态 | ✅ 2026-10-22 新增、2026-10-25 随 11 工具与两处根因修复更新（用 `emu_*` 工具前必读；含"设置页改动不生效"的已知漂移） |
 | [guides/DIARY.md](guides/DIARY.md) | 每日日记全解：`D:\日记\` 目录布局、`diary` 配置七键、`ensureDiarySession()` 的 preset 硬门禁、`buildDiaryPrompt()` 七段注入、`parseDiaryOutput()` 容错、L1/L2/L3 事项过期、模型侧四个读取工具、七个失败形态 | ✅ 2026-10-22 新增（含 `qq_read_diary` 的 UTC 日期已知 bug） |
 | [guides/QZONE.md](guides/QZONE.md) | QQ 空间说说全解：`qq_qzone_post` / `_list` / `_delete` 的参数与逐字返回文案、可见性映射（fail-closed）、`qzoneGuard` 唯一一道出站门禁、为什么直连 OneBot 绕过桥接审计、七个失败形态 | ✅ 2026-10-22 新增（改 qzone 代码前必读：门禁与 schema 字面量两条死约束） |
 

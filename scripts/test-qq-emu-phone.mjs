@@ -164,14 +164,19 @@ assert(
 );
 // 同一文件里不应再有第二个自相矛盾的 version 字面量声明（历史值是 '1.0.0'）。
 assert('不再残留 version: \'1.0.0\' 的自称', !/new McpServer\(\{[^}]*version:\s*'1\.0\.0'/.test(mcpSource));
-// 工具名契约：9 个 emu_* 工具（改名会破坏 mcp__emu-phone__* 前端契约）。
+// 工具名契约：11 个 emu_* 工具（改名会破坏 mcp__emu-phone__* 前端契约）。
+// 顺序也钉住：新增工具必须同时更新这里，避免「悄悄少/多一个」这种回归。
 const toolNames = [...mcpSource.matchAll(/server\.tool\(\s*'([^']+)'/g)].map((m) => m[1]);
-assert('共注册 9 个工具', toolNames.length === 9, `实际 ${toolNames.length}：[${toolNames.join(', ')}]`);
+assert('共注册 11 个工具', toolNames.length === 11, `实际 ${toolNames.length}：[${toolNames.join(', ')}]`);
 assert(
   '工具名集合与预期完全一致（顺序也钉住）',
-  toolNames.join(',') === 'emu_status,emu_screenshot,emu_tap,emu_tap_text,emu_text,emu_key,emu_swipe,emu_app,emu_watch',
+  toolNames.join(',') === 'emu_status,emu_screenshot,emu_tap,emu_tap_text,emu_focus_text,emu_text,emu_ui,emu_key,emu_swipe,emu_app,emu_watch',
   `实际 [${toolNames.join(', ')}]`,
 );
+// 两个新工具是「点不到输入框」的专用解法，缺了就等于修复回退。
+for (const must of ['emu_ui', 'emu_focus_text']) {
+  assert(`新工具 ${must} 已注册`, toolNames.includes(must));
+}
 assert(
   '全部工具名满足 DSH 命名契约 /^[A-Za-z0-9_-]{1,64}$/',
   toolNames.every((n) => /^[A-Za-z0-9_-]{1,64}$/.test(n)),

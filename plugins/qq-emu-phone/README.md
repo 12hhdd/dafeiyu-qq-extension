@@ -13,7 +13,7 @@
 | 层 | 落地物 | 谁注册 | 缺了会怎样 |
 | --- | --- | --- | --- |
 | **DSH 插件（本包）** | `package.json` + `cordis.patch.yml` + `lib/index.js` | `scripts/setup-dsh.mjs` 的 `BUNDLE_NAMES` / `ensureBundle()` 建两层链接，再 `patchProfilePackage()` 写进 profile 的 `dependencies` + `dsh.profile.bundles[]` | 设置页里看不到 `qq-emu-phone` 命名空间；**工具照常可用** |
-| **MCP 工具端点** | `src/mcp-emu-phone.js`（单文件，399 行） | `scripts/setup-dsh.mjs` 的 `MANAGED_MCP_IDS`（`mcp-emu-phone`）+ `mcpEntries()` 的 `servers` 表，生成 `@deepseek-ai/dsh-mcp-client` loader 行，`command: <node 绝对路径>` / `args: ['<src/mcp-emu-phone.js 绝对路径>']` / `toolCallTimeoutMs: 300000` | 工具 `mcp__emu-phone__*` 完全不存在；**设置项照常可见** |
+| **MCP 工具端点** | `src/mcp-emu-phone.js`（单文件，733 行） | `scripts/setup-dsh.mjs` 的 `MANAGED_MCP_IDS`（`mcp-emu-phone`）+ `mcpEntries()` 的 `servers` 表，生成 `@deepseek-ai/dsh-mcp-client` loader 行，`command: <node 绝对路径>` / `args: ['<src/mcp-emu-phone.js 绝对路径>']` / `toolCallTimeoutMs: 300000` | 工具 `mcp__emu-phone__*` 完全不存在；**设置项照常可见** |
 
 所以本插件**不 import** `src/mcp-emu-phone.js`，也不重写一遍 `emuCfg()` —— 两边各自从
 `config.json` 的 `emuPhone` 段/DSH 设置读参数是历史现状，改动其中一边不会自动同步到另一边。
@@ -73,22 +73,40 @@
 
 ---
 
-## 4. 工具清单（在 `src/mcp-emu-phone.js`，共 9 个）
+## 4. 工具清单（在 `src/mcp-emu-phone.js`，共 11 个）
 
 DSH 侧调用名 = `mcp__emu-phone__<工具名>`。所有 handler 都 `try/catch`，失败返回
 `{content:[{type:'text',text:'…失败：…'}], isError:true}`，不会让 MCP 连接崩掉。
 
 | 工具 | 参数 | 行为 |
 | --- | --- | --- |
-| `emu_status` | 无 | 只读：serial / android 版本 / 型号 / ABI / 分辨率 / 前台应用 |
+| `emu_status` | 无 | 只读：serial / android 版本 / 型号 / ABI / 分辨率 / 前台应用 / 动画三档是否已关 |
 | `emu_screenshot` | `maxWidth?` (number，默认 900，夹在 320–1600) | 截图 → System.Drawing 压成 JPEG → 返回图片 + 原图文件名 |
 | `emu_tap` | `x` (number), `y` (number) | 点击逻辑坐标；坐标越界（> 屏幕 2 倍或负数）直接抛错 |
-| `emu_tap_text` | `text` (string) | uiautomator dump 后按 text/content-desc 精确优先匹配，命中即点 |
-| `emu_text` | `text` (string) | ASCII 走 `input text`；中文/非 ASCII 走 Windows 剪贴板 + `KEYCODE_PASTE`(279) |
+| `emu_tap_text` | `text` (string) | uiautomator dump 后按 text/content-desc/resource-id 精确优先匹配（同分优先可点击、优先叶子控件），返回是否跳转了前台 |
+| `emu_focus_text` | `text?`, `submit?`, `value?` | **专治输入框点不到**：点完用 IME 是否弹出做判定，没弹出就换偏移重试（最多 4 次）；`submit`+`value` 可聚焦后直接输入并回车 |
+| `emu_text` | `text`, `enter?`, `field?`, `replace?`, `focus?` | 输入文字：ASCII 走 `input text`；中文优先 ADBKeyboard 广播（同步可靠），没有则退回剪贴板粘贴；**写入后回读校验**，粘串了自动清掉重试 |
+| `emu_ui` | `limit?`（默认 60）, `clickableOnly?`（默认 true） | **只读**：列出当前界面可点控件（文字/描述/id/坐标），点不准时先看清再点 |
 | `emu_key` | `key` (string) | 按键名（home/back/enter/recent/power/volume_up/volume_down/del/move_end/paste…），也接受纯数字 keycode |
 | `emu_swipe` | `x1`,`y1`,`x2`,`y2` (number), `durationMs?`（默认 300，夹 50–3000） | `input swipe` |
 | `emu_app` | `action` (`'start'\|'stop'\|'list'`), `package?` (string) | `list` = `pm list packages -3`；start/stop 要求包名匹配 `^[a-zA-Z0-9._]+$` |
 | `emu_watch` | `seconds?`（默认 30，夹 5–120）, `intervalSec?`（默认 2，夹 1–10） | 抽帧看视频：调用 `state/agents/emu/watch.ps1`，只留有变化的帧拼成看板图 |
+
+### 为什么要有 `emu_ui` / `emu_focus_text`
+
+两个根因，都已实测确认：
+
+1. **uiautomator 永远等不到 idle state** —— 模拟器界面一直在跑动画时，`uiautomator dump` 报
+   `ERROR: could not get idle state.` + `Segmentation fault`，且**根本不生成 XML**。
+   所以每次 dump 前都把动画三档写成 0（`ensureAnimationsOff()`），并把 `dump` 的失败按
+   「缺 `</hierarchy>` / 节点数过少」判为残缺后重试。
+2. **输入框点不到** —— 控件中心点可能落在容器缝隙上，键盘弹起后布局上移又会点空。
+   所以 `emu_focus_text` / `emu_text` 用「IME 是否真的弹出」当唯一判据，失败就换偏移再来。
+
+中文输入另有坑：Windows 剪贴板 → 共享剪贴板是**异步**的，实测会粘出两轮之前的旧内容
+（标题/正文互串），所以主通道改成 ADBKeyboard 的 `ADB_INPUT_B64` 广播，剪贴板只当兜底，
+且兜底路径带「回读 + 删掉残留 + 递增等待重试」。
+
 
 前置条件（本机已修好，见 `state/agents/emu/README.md`；`state/` 不入库）：
 

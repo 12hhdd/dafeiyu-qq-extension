@@ -186,38 +186,217 @@ function keyevent(name) {
 
 function tap(x, y) {
   const size = screenSize();
-  const cx = Math.round(Number(x));
-  const cy = Math.round(Number(y));
+  const nx = Number(x);
+  const ny = Number(y);
+  const cx = Math.round(nx);
+  const cy = Math.round(ny);
   if (!Number.isFinite(cx) || !Number.isFinite(cy) || cx < 0 || cy < 0 || cx > size.width * 2 || cy > size.height * 2) {
     throw new Error(`坐标越界：${x},${y}（屏幕 ${size.width}x${size.height}）`);
   }
   sh(`input tap ${cx} ${cy}`);
 }
 
-function inputText(text) {
-  const s = String(text ?? '');
-  if (!s.trim()) throw new Error('要输入的文字为空');
-  if (/^[\x20-\x7e\r\n\t]*$/.test(s)) {
-    sh(`input text '${s.replace(/'/g, "'\\''").replace(/ /g, '%s')}'`);
-    return 'ascii';
+// 同步 sleep（不阻塞事件循环太久，仅用于点击后等 UI 稳定）
+const sleepBuf = new Int32Array(new SharedArrayBuffer(4));
+function sleep(ms) {
+  try { Atomics.wait(sleepBuf, 0, 0, Math.max(0, ms)); } catch { /* ignore */ }
+}
+
+// 输入法是否弹出。用 grep -m1 减少 dumpsys 输出量。
+function imeShown() {
+  try {
+    const raw = sh('dumpsys input_method | grep -m1 mInputShown');
+    return /mInputShown=true/.test(raw);
+  } catch {
+    return false;
   }
-  // 中文/非 ASCII：走 Windows 剪贴板 → 模拟器共享剪贴板 → KEYCODE_PASTE。
+}
+
+function clampPoint(x, y, size) {
+  return [
+    Math.min(Math.max(Math.round(x), 1), size.width - 2),
+    Math.min(Math.max(Math.round(y), 1), size.height - 2)
+  ];
+}
+
+// ===== 中文输入的主通道：ADBKeyboard =====
+// 剪贴板同步是**异步**且不可靠的（实测会粘出两轮之前的旧内容，导致标题/正文互串），
+// 只适合当兜底。ADBKeyboard 走 IME commitText 广播，base64 传 UTF-8，
+// 内容是「直接提交给输入连接」的，不存在同步延迟和抢占问题 —— 这才是可靠通道。
+const ADB_KB_IME = 'com.android.adbkeyboard/.AdbIME';
+let adbKbAvailability = null; // null=没查过 true/false=查过
+
+function adbKeyboardInstalled() {
+  if (adbKbAvailability !== null) return adbKbAvailability;
+  try {
+    adbKbAvailability = sh('ime list -s', { timeout: 20000 }).includes(ADB_KB_IME);
+  } catch { adbKbAvailability = false; }
+  return adbKbAvailability;
+}
+
+function currentIme() {
+  try { return sh('settings get secure default_input_method', { timeout: 15000 }).trim(); } catch { return ''; }
+}
+
+// 找系统里真正的用户输入法（排除 ADBKeyboard 自己）。
+// 别直接还原到「切换前那个」：如果上一轮崩在中途，切换前就是 ADBKeyboard，
+// 还原来还回去等于把用户键盘永久换掉（这个坑实测踩过一次）。
+const SOGOU_IME = 'com.sohu.inputmethod.sogou.chuizi/com.sohu.inputmethod.sogou.SogouIME';
+
+function restoreIme(prev) {
+  let target = prev && prev !== ADB_KB_IME ? prev : '';
+  if (!target) {
+    try {
+      const list = sh('ime list -s', { timeout: 20000 }).split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
+      target = list.find((x) => x !== ADB_KB_IME) || '';
+    } catch { /* ignore */ }
+  }
+  if (!target) return;
+  try { sh(`ime set ${target}`, { timeout: 25000 }); sleep(400); } catch { /* 还原失败不致命 */ }
+}
+
+// 用 ADBKeyboard 提交一段文字（含中文/emoji）。切过去 → 广播 → 切回用户输入法。
+// base64 必须在 Node 里算：用 PowerShell 传中文参数会被转成 GBK，到手机上就是乱码。
+function inputByAdbKeyboard(s) {
+  const prev = currentIme();
+  const b64 = Buffer.from(s, 'utf8').toString('base64');
+  let r = '';
+  try {
+    sh(`ime set ${ADB_KB_IME}`, { timeout: 25000 });
+    sleep(600);
+    r = sh(`am broadcast -a ADB_INPUT_B64 --es msg ${b64}`, { timeout: 30000 });
+    sleep(900);
+  } finally {
+    // try/finally：中途任何一步抛错也要把键盘还给用户，不然模拟器就永久停在 ADBKeyboard 上
+    restoreIme(prev);
+  }
+  if (!/result=0|Broadcast completed/i.test(r)) throw new Error(`ADBKeyboard 广播失败：${String(r).trim().slice(0, 120)}`);
+  return true;
+}
+
+// 兜底：Windows 剪贴板 → 共享剪贴板 → KEYCODE_PASTE。
+// 每次写剪贴板后必须等 + 粘完必须回读，否则会粘到上一轮的旧内容。
+function setWindowsClipboard(s) {
   const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', 'Set-Clipboard', '-Value', s], {
     stdio: ['ignore', 'ignore', 'ignore'],
     timeout: 20000,
     windowsHide: true
   });
   if (r.error) throw new Error(`写剪贴板失败：${r.error.message}`);
-  spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep', '-Milliseconds', '300'], { stdio: 'ignore', timeout: 5000 });
-  sh('input keyevent 279');
-  return 'clipboard';
+  return r;
 }
 
-function uiNodes() {
+// 输入框当前文字（用于「粘完到底进没进去」的回读校验）。
+// 必须用 dump 读 text 属性：这是唯一能确证结果的手段，退出码/IME 状态都不可信。
+function fieldText(target) {
+  try {
+    const nodes = uiNodes();
+    const edits = nodes.filter((n) => /EditText/.test(n.cls));
+    let n = null;
+    if (target) n = findTarget(edits, target) || null;
+    if (!n) n = edits.find((x) => x.focused) || null;
+    if (!n && edits.length === 1) n = edits[0];
+    return n ? { text: n.text, node: n } : null;
+  } catch { return null; }
+}
+
+// 输入文字（假定光标已在目标框里），并在外面校验落入结果。
+// 顺序：纯 ASCII 走 `input text`（最快最稳）；含中文优先 ADBKeyboard（同步可靠）；
+// 没有 ADBKeyboard 才退回剪贴板粘贴（可能串，故带重试与回读）。
+function inputText(text, opts = {}) {
+  const s = String(text ?? '');
+  if (!s.trim()) throw new Error('要输入的文字为空');
+  if (/^[\x20-\x7e\r\n\t]*$/.test(s)) {
+    sh(`input text '${s.replace(/'/g, "'\\''").replace(/ /g, '%s')}'`);
+    return { mode: 'ascii', ok: true };
+  }
+
+  const target = opts.target ?? null;
+  const before = fieldText(target);
+  const beforeText = before ? before.text : null;
+
+  // 1) 首选 ADBKeyboard
+  if (adbKeyboardInstalled()) {
+    inputByAdbKeyboard(s);
+    const now = fieldText(target);
+    const seen = now ? now.text : null;
+    if (seen != null && seen.includes(s)) return { mode: 'adbkeyboard', ok: true, text: seen };
+    // 没进去就落到剪贴板兜底（可能光标不在框里，或 IME 没接住）
+  }
+
+  // 2) 兜底：剪贴板粘贴，最多 3 轮，等待递增
+  // 等待时间递增（剪贴板同步慢时靠这个兜住）；回读里出现目标文字才算成功。
+  const waits = [900, 1600, 2600];
+  let lastSeen = null;
+  for (let i = 0; i < waits.length; i++) {
+    setWindowsClipboard(s);
+    sleep(waits[i]);
+    sh('input keyevent 279');
+    sleep(600);
+    const now = fieldText(target);
+    lastSeen = now ? now.text : null;
+    if (lastSeen != null && lastSeen.includes(s)) {
+      return { mode: 'clipboard', ok: true, waited: waits[i], text: lastSeen };
+    }
+    // 落到别的框了（早前那次的旧内容串了过来）：清掉再试，避免把脏字留在界面上。
+    if (lastSeen != null && beforeText != null && lastSeen !== beforeText && !lastSeen.includes(s)) {
+      // 命中上一轮残留：把刚粘进去的旧内容删掉（按长度退格），保持现场干净
+      const extra = lastSeen.length - beforeText.length;
+      if (extra > 0 && extra < 200) {
+        sh('input keyevent 123');
+        for (let k = 0; k < extra; k++) sh('input keyevent 67');
+      }
+    }
+  }
+  throw new Error(`粘贴没生效（剪贴板同步太慢或被抢）。目标文字「${s}」，框里现在是「${lastSeen ?? '读不到'}」。通常重试一次就好，或改用 emu_text 的 replace 清空后重来。`);
+}
+
+// ===== 根因：uiautomator 永远等不到 idle state =====
+// 实测这台模拟器上 `uiautomator dump` 会报 `ERROR: could not get idle state.` + `Segmentation fault`，
+// 且**根本不生成 XML 文件**。原因是界面一直在跑动画（无限循环的呼吸/轮播），uiautomator 等 idle 等到崩溃。
+// 关掉三档动画后 10/10 次 dump 全部成功（59KB 完整树）—— 这就是「点不到控件」最底层的病根。
+const ANIM_KEYS = ['window_animation_scale', 'transition_animation_scale', 'animator_duration_scale'];
+
+// 每次都读一次真实值再决定要不要写：`settings get` 只要几十毫秒，
+// 但不能缓存「已修好」——模拟器重启/换 App 后动画会被改回来，
+// 缓存会导致第一次 dump 白等 40s 才超时。读到非 0 就重设。
+function ensureAnimationsOff() {
+  try {
+    const cur = sh(`settings get global animator_duration_scale`).trim();
+    if (cur !== '0') {
+      sh(ANIM_KEYS.map((k) => `settings put global ${k} 0`).join('; '), { timeout: 20000 });
+      sleep(300);
+    }
+  } catch { /* 忽略：不影响主流程 */ }
+}
+
+// dump 一次并校验：先删旧文件（失败时 cat 会读到上一屏的陈旧 XML → 点到不存在的坐标），
+// 再校验闭合根节点与节点数（残缺时实测 5KB 且缺 </hierarchy>）。
+function dumpOnce() {
+  sh('rm -f /sdcard/emu_mcp_ui.xml', { timeout: 15000 });
+  sh('uiautomator dump /sdcard/emu_mcp_ui.xml', { timeout: 40000 });
   const serial = detectSerial();
-  sh('uiautomator dump /sdcard/emu_mcp_ui.xml >/dev/null 2>&1');
   const r = runAdb(['-s', serial, 'shell', 'cat /sdcard/emu_mcp_ui.xml'], { bin: false, timeout: 30000 });
-  const xml = String(r.out ?? '');
+  return String(r.out ?? '');
+}
+
+function dumpUiXml(tries = 3) {
+  ensureAnimationsOff();
+  let last = '';
+  for (let i = 0; i < tries; i++) {
+    const xml = dumpOnce();
+    last = xml;
+    const complete = xml.includes('<hierarchy') && xml.includes('</hierarchy>');
+    const nodeCount = (xml.match(/<node /g) || []).length;
+    if (complete && nodeCount > 3) return xml;
+    // 偶尔还会失败：动画又被 App 打开了，或该界面本身就持续重绘。再关一次动画后重试。
+    if (i === 0) ensureAnimationsOff();
+    sleep(600);
+  }
+  return last;
+}
+
+function parseNodes(xml) {
   const nodes = [];
   const re = /<node[^>]*>/g;
   let m;
@@ -230,41 +409,103 @@ function uiNodes() {
     const bounds = /bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/.exec(tag);
     if (!bounds) continue;
     const [x1, y1, x2, y2] = bounds.slice(1).map(Number);
+    if (x2 <= x1 || y2 <= y1) continue; // 0 尺寸控件点不到
     nodes.push({
       text: attr('text'),
       desc: attr('content-desc'),
       cls: attr('class'),
+      rid: attr('resource-id'),
       clickable: attr('clickable') === 'true',
+      focused: attr('focused') === 'true',
+      x1, y1, x2, y2,
       cx: Math.round((x1 + x2) / 2),
-      cy: Math.round((y1 + y2) / 2)
+      cy: Math.round((y1 + y2) / 2),
+      area: (x2 - x1) * (y2 - y1)
     });
   }
   return nodes;
 }
 
+function uiNodes() {
+  return parseNodes(dumpUiXml());
+}
+
+function visibleText(nodes, n = 24) {
+  return nodes.map((x) => x.text || x.desc || (x.rid ? `#${x.rid.split('/').pop()}` : '')).filter(Boolean).slice(0, n).join(' | ');
+}
+
+// 控件中心点可能落在 View 组内的缝隙上（例如小黑盒评论框外覆了一层 vg_editor_container），
+// 且靠近屏幕底边（1920 高时 y>1800）时更容易被系统手势区吃掉 —— 统一往控件内部收敛。
+function safeCenter(node, size) {
+  const insetY = Math.min(Math.floor((node.y2 - node.y1) * 0.25), 18);
+  const x = Math.round((node.x1 + node.x2) / 2);
+  const y = Math.round((node.y1 + node.y2) / 2 + (node.y2 > size.height - 120 ? -insetY : 0));
+  return clampPoint(x, y, size);
+}
+
+// 找输入框并点开，点完用 IME 是否弹出做判定，没弹出就换偏移再试（最多 4 次）。
+// 命中率问题来自三处：dump 残缺 → 坐标算错；坐标落在容器缝隙；键盘弹起后布局上移导致后续点击点空。
+function focusEditor(text) {
+  const size = screenSize();
+  const tries = [];
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    const nodes = uiNodes();
+    let target = text ? findTarget(nodes, text) : null;
+    if (!target) {
+      const edits = nodes.filter((n) => /EditText/.test(n.cls));
+      target = edits.find((n) => n.area > 4000) || edits[0] || null;
+    }
+    if (!target) return { ok: false, tries, reason: `界面上没有找到输入框（可见：${visibleText(nodes)}）` };
+    const offsets = [
+      [0, 0],
+      [0, -Math.round((target.y2 - target.y1) * 0.3)],
+      [Math.round((target.x2 - target.x1) * 0.25), 0],
+      [-Math.round((target.x2 - target.x1) * 0.25), 0]
+    ][attempt - 1];
+    const [px, py] = clampPoint(target.cx + offsets[0], target.cy + offsets[1], size);
+    sh(`input tap ${px} ${py}`);
+    sleep(700);
+    const ok = imeShown();
+    tries.push(`${px},${py}:${ok ? 'ok' : 'no'}`);
+    if (ok) return { ok: true, attempt, px, py, tries, node: target };
+    sleep(200);
+  }
+  return { ok: false, tries };
+}
+
+function findTarget(nodes, want) {
+  const scored = [];
+  for (const n of nodes) {
+    let s = -1;
+    if (n.text === want) s = 0;
+    else if (n.desc === want) s = 1;
+    else if (n.rid && n.rid.split('/').pop() === want) s = 2;
+    else if (n.text && n.text.includes(want)) s = 3;
+    else if (n.desc && n.desc.includes(want)) s = 4;
+    else if (n.rid && n.rid.includes(want)) s = 5;
+    if (s >= 0) scored.push({ n, s });
+  }
+  if (!scored.length) return null;
+  // 同分时优先「可点击」、优先面积小的（更可能是叶子控件而不是整块容器）
+  scored.sort((a, b) => a.s - b.s || Number(b.n.clickable) - Number(a.n.clickable) || a.n.area - b.n.area);
+  return scored[0].n;
+}
+
 function tapText(needle) {
   const want = String(needle ?? '').trim();
   if (!want) throw new Error('要点击的文字为空');
+  const size = screenSize();
   const nodes = uiNodes();
-  const score = (n) => {
-    if (n.text === want) return 0;
-    if (n.desc === want) return 1;
-    if (n.text && n.text.includes(want)) return 2;
-    if (n.desc && n.desc.includes(want)) return 3;
-    return -1;
-  };
-  let best = null;
-  let bestScore = 99;
-  for (const n of nodes) {
-    const s = score(n);
-    if (s >= 0 && s < bestScore) { best = n; bestScore = s; }
-  }
+  const best = findTarget(nodes, want);
   if (!best) {
-    const visible = nodes.map((n) => n.text || n.desc).filter(Boolean).slice(0, 20).join(' | ');
-    throw new Error(`没有找到可点击的「${want}」：当前界面可见文字 ${visible}`);
+    throw new Error(`没有找到可点击的「${want}」：当前界面可见文字 ${visibleText(nodes)}`);
   }
-  tap(best.cx, best.cy);
-  return best;
+  const [tx, ty] = safeCenter(best, size);
+  const before = foreground();
+  sh(`input tap ${tx} ${ty}`);
+  sleep(420);
+  const after = foreground();
+  return { node: best, tx, ty, before, after, changed: before !== after };
 }
 
 function listApps() {
@@ -289,6 +530,8 @@ server.tool('emu_status', '查看「我的手机」（本机 MuMu 安卓模拟�
   try {
     const size = screenSize();
     const props = sh('getprop ro.build.version.release; getprop ro.product.model; getprop ro.product.cpu.abilist').split(/\r?\n/);
+    // 动画三档必须是 0，否则 uiautomator 等不到 idle、dump 崩溃 → 所有按控件的操作都会失败。
+    const anim = sh('settings get global animator_duration_scale').trim();
     return {
       content: [{
         type: 'text',
@@ -298,7 +541,8 @@ server.tool('emu_status', '查看「我的手机」（本机 MuMu 安卓模拟�
           model: props[1] || '',
           abi: props[2] || '',
           screen: `${size.width}x${size.height}`,
-          foreground: foreground()
+          foreground: foreground(),
+          animations: anim === '0' ? 'off' : `on(${anim})`
         }, null, 2)
       }]
     };
@@ -327,20 +571,108 @@ server.tool('emu_tap', '点击屏幕坐标（逻辑坐标，即 emu_status 返�
   catch (e) { return { content: [{ type: 'text', text: `点击失败：${e?.message ?? e}` }], isError: true }; }
 });
 
-server.tool('emu_tap_text', '按界面上的文字/描述点击控件（uiautomator 解析，精确匹配优先）。', {
-  text: z.string().describe('要点击的控件文字')
+server.tool('emu_tap_text', '按界面上的文字/描述/id 点击控件（精确匹配优先；同分优先可点击、优先叶子控件）。返回是否发生了界面跳转。', {
+  text: z.string().describe('要点击的控件文字、content-desc，或 resource-id 尾部（如 et_editor）')
 }, async ({ text }) => {
   try {
     const hit = tapText(text);
-    return { content: [{ type: 'text', text: `已点击「${hit.text || hit.desc}」(${hit.cx}, ${hit.cy})，前台 ${foreground()}` }] };
+    const label = hit.node.text || hit.node.desc || `#${hit.node.rid.split('/').pop()}`;
+    const note = hit.changed ? `界面已变化（${hit.before} → ${hit.after}）` : `界面未跳转（仍在 ${hit.after}）`;
+    return { content: [{ type: 'text', text: `已点击「${label}」(${hit.tx}, ${hit.ty})，${note}` }] };
   } catch (e) { return { content: [{ type: 'text', text: `点击失败：${e?.message ?? e}` }], isError: true }; }
 });
 
-server.tool('emu_text', '向当前输入框输入文字（ASCII 走 input text，中文自动走共享剪贴板粘贴）。', {
-  text: z.string().describe('要输入的文字')
-}, async ({ text }) => {
-  try { const mode = inputText(text); return { content: [{ type: 'text', text: `已输入（${mode}）：${text}` }] }; }
+// 专治「输入框点不到」：点完立刻验证 IME 是否弹出，没弹出就换位置重试。
+// 命中率问题主要来自三处：dump 残缺 → 坐标算错；坐标落在容器缝隙；键盘弹起后布局上移导致后续点击点空。
+server.tool('emu_focus_text', '点击输入框并确认键盘弹出（自动重试）。用于「聊天框/搜索框点不到」：先试 id 或提示文字，点完校验 IME，未弹出就微调坐标再试，最多 4 次。', {
+  text: z.string().optional().describe('输入框文字/描述/id 尾部，默认自动找当前界面的 EditText'),
+  submit: z.boolean().optional().describe('聚焦后是否立刻输入文字并回车（配合 value）'),
+  value: z.string().optional().describe('要输入的搜索词/内容，配合 submit')
+}, async ({ text, submit, value }) => {
+  try {
+    const res = focusEditor(text);
+    if (!res.ok) {
+      return {
+        content: [{
+          type: 'text',
+          text: res.reason
+            ? res.reason
+            : `4 次尝试都没能唤出键盘（${res.tries.join(' ')}）。可能该输入框被悬浮层遮挡，或需要先滑动把它挪到屏幕中间。`
+        }],
+        isError: true
+      };
+    }
+    let msg = `已聚焦输入框（第 ${res.attempt} 次尝试，坐标 ${res.px},${res.py}），键盘已弹出`;
+    if (submit && value) {
+      const r = inputText(value, { target: text || null });
+      sleep(250);
+      sh('input keyevent 66');
+      msg += `；已输入并回车（${r.mode}，回读校验通过）：${value}`;
+    }
+    return { content: [{ type: 'text', text: `${msg}。尝试记录 ${res.tries.join(' ')}` }] };
+  } catch (e) { return { content: [{ type: 'text', text: `聚焦失败：${e?.message ?? e}` }], isError: true }; }
+});
+
+server.tool('emu_text', '向输入框输入文字（ASCII 走 input text，中文自动走共享剪贴板粘贴）。粘错框/粘串了会回读校验并自动重试。', {
+  text: z.string().describe('要输入的文字'),
+  enter: z.boolean().optional().describe('输入后是否立刻回车（搜索框提交用）'),
+  field: z.string().optional().describe('目标输入框的文字/描述/id 尾部（如 et_title / et_content）。多输入框界面强烈建议传，否则可能粘进当前还有焦点的别的框'),
+  replace: z.boolean().optional().describe('输入前先清空该输入框原有内容，默认 false（追加）'),
+  focus: z.boolean().optional().describe('输入前先点开输入框，默认 true')
+}, async ({ text, enter, field, replace, focus }) => {
+  try {
+    let note = '';
+    // 关键：不能用「键盘有没有弹出」判断焦点对不对。
+    // 上一个框的键盘还在时，直接粘贴就会粘进那个旧框 —— 这就是标题/正文「来回互粘」的第二个原因。
+    // 因此只要指定了 field（或默认 true），一律重新聚焦一次。
+    if (focus !== false) {
+      const res = focusEditor(field);
+      if (res.ok) note = `（聚焦 ${field || '输入框'} ${res.px},${res.py}，第 ${res.attempt} 次）`;
+      else note = `（聚焦输入框失败：${res.reason || res.tries.join(' ')}）`;
+    }
+    // 全选 + 退格清空（keycombination 113 29 = Ctrl+A）
+    if (replace === true) {
+      sh('input keycombination 113 29', { timeout: 15000 });
+      sleep(200);
+      sh('input keyevent 67');
+      sleep(300);
+      note += '（已清空原内容）';
+    }
+    const r = inputText(text, { target: field || null });
+    if (enter) { sleep(250); sh('input keyevent 66'); }
+    const where = foreground();
+    const waited = r.waited ? `，等剪贴板 ${r.waited}ms` : '';
+    return {
+      content: [{
+        type: 'text',
+        text: `已输入${note}（${r.mode}${waited}，回读校验通过）：${text}${enter ? '，已回车' : ''}，当前 ${where}`
+      }]
+    };
+  }
   catch (e) { return { content: [{ type: 'text', text: `输入失败：${e?.message ?? e}` }], isError: true }; }
+});
+
+// 让 agent「看见」当前界面上有什么可点，而不是盲猜坐标。
+server.tool('emu_ui', '列出当前界面可交互的控件（文字 / 描述 / id / 坐标），用于判断该点哪里。只读。', {
+  limit: z.number().optional().describe('最多返回多少个控件，默认 60'),
+  clickableOnly: z.boolean().optional().describe('只列可点击控件，默认 true')
+}, async ({ limit, clickableOnly }) => {
+  try {
+    const nodes = uiNodes();
+    const onlyClickable = clickableOnly !== false;
+    const picked = nodes
+      .filter((n) => (onlyClickable ? n.clickable || /EditText/.test(n.cls) : true))
+      .filter((n) => n.text || n.desc || n.rid || /EditText/.test(n.cls))
+      .sort((a, b) => a.cy - b.cy)
+      .slice(0, Math.min(Math.max(Number(limit) || 60, 1), 200))
+      .map((n) => `[${n.cx},${n.cy}] ${n.text || n.desc || ''}${n.rid ? ' #' + n.rid.split('/').pop() : ''}${n.clickable ? '' : ' (不可点)'}`);
+    return {
+      content: [{
+        type: 'text',
+        text: `前台 ${foreground()}\n` + (picked.length ? picked.join('\n') : '当前界面没有可识别控件')
+      }]
+    };
+  } catch (e) { return { content: [{ type: 'text', text: `读取界面失败：${e?.message ?? e}` }], isError: true }; }
 });
 
 server.tool('emu_key', '按安卓按键，如 home/back/enter/recent/power/volume_up/volume_down/del/move_end/paste。', {
